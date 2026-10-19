@@ -48,6 +48,9 @@ allowing them to view all email inbox content from a single interface.
 
 This aggregation approach avoids the hassle of logging into multiple platforms and reduces security risks, easily achieving "receive all emails in one place".
 
+> 🔒 **Receiving scope**: Alle only accepts mail for `xxx@chaorenex1.com` addresses registered through "Add mailbox" in the sidebar.
+> Mail for other domains, or for addresses that were never registered, is rejected instead of creating an account automatically.
+
 ---
 
 ### 🤖 AI Recognition

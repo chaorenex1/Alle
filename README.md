@@ -48,6 +48,9 @@ Alle 依托于各邮箱服务商的 **自动转发功能** 来实现聚合。
 
 这种聚合方式避免了多平台登录的麻烦，也降低了安全风险，轻松实现「一处收全邮」。  
 
+> 🔒 **收信范围**：Alle 只接收 `xxx@chaorenex1.com` 的邮件，且地址必须先在侧边栏「添加邮箱」里登记；
+> 其他域名或未登记的地址会被直接拒收，不会再自动建号。
+
 ---
 
 ### 🤖 AI 识别
@@ -75,6 +78,25 @@ AI 识别功能让邮件阅读更直观，用户可直接从提取结果中完�
 - ⚡ 临时接收一次性信息或测试邮件  
 
 所有临时邮箱接收的邮件均会自动汇入主界面，统一管理，避免遗漏。  
+
+---
+
+### ✉️ 发信与外部 API
+
+- **从登记邮箱发信**：侧边栏「写邮件」选择发件邮箱，经 Cloudflare Email Sending 的 `send_email` 绑定发出；发出的邮件同样归档到该邮箱。
+- **前缀分流**：在「设置 → 邮箱」为任意邮箱登记收信前缀（如 `support`），发到 `support@chaorenex1.com` 的邮件就落到这个邮箱；`user+detail@` 按 `user@` 处理。
+- **邮件令牌**：「设置 → 令牌」创建，可限定 `send` / `read` 权限并绑定邮箱；令牌只在创建时显示一次，库里只存哈希。
+
+```bash
+curl -X POST https://<你的域名>/api/v1/messages \
+  -H "Authorization: Bearer <令牌>" \
+  -H "content-type: application/json" \
+  -d '{"from":"hello@chaorenex1.com","to":"someone@example.com","subject":"hi","text":"hello"}'
+
+curl "https://<你的域名>/api/v1/messages?limit=20" -H "Authorization: Bearer <令牌>"
+```
+
+> 本地 `npm run dev` 下 `send_email` 是远程绑定，未 `wrangler login` 时发信会一直等待；本地验证收信和接口即可。
 
 ---
 

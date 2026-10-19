@@ -2,6 +2,8 @@ import { and, desc, eq, inArray, like, or, sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import * as schema from "../db/schema";
+import { OutboundError, parseRecipients, sendMail } from "../email/outbound";
+import { normalizeMailAddress } from "../mailDomain";
 
 export const emailRoutes = new Hono<{ Bindings: Env }>();
 
@@ -55,6 +57,8 @@ emailRoutes.get("/", async (c) => {
 			sent_at: schema.emails.sent_at,
 			subject: schema.emails.subject,
 			read: schema.emails.read,
+			recipient: schema.emails.recipient,
+			direction: schema.emails.direction,
 		})
 		.from(schema.emails)
 		.where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -73,10 +77,49 @@ emailRoutes.get("/", async (c) => {
 			sent_at: email.sent_at,
 			subject: email.subject,
 			read: email.read,
+			recipient: email.recipient,
+			direction: email.direction,
 		})),
 		next_cursor: nextCursor,
 		has_more: hasMore,
 	});
+});
+
+// 从已登记的邮箱发信；发送成功后同样落库，面板里能看到这封已发送邮件。
+emailRoutes.post("/send", async (c) => {
+	const body = await c.req.json<{
+		account_id?: string;
+		from?: string;
+		to?: unknown;
+		subject?: string;
+		text?: string;
+		html?: string;
+		reply_to?: string;
+	}>().catch(() => null);
+	if (!body) return c.json({ error: "请求体不是合法 JSON。" }, 400);
+
+	const db = drizzle(c.env.DB, { schema });
+	const account = body.account_id
+		? await db.select().from(schema.accounts).where(eq(schema.accounts.id, body.account_id.trim())).get()
+		: body.from
+			? await db.select().from(schema.accounts).where(eq(schema.accounts.email, normalizeMailAddress(body.from) ?? "")).get()
+			: undefined;
+	if (!account) return c.json({ error: "发件邮箱未登记。" }, 404);
+
+	try {
+		const item = await sendMail(c.env, {
+			account,
+			to: parseRecipients(body.to),
+			subject: body.subject ?? "",
+			text: body.text,
+			html: body.html,
+			replyTo: body.reply_to,
+		});
+		return c.json({ item }, 201);
+	} catch (error) {
+		if (error instanceof OutboundError) return c.json({ error: error.message }, error.status as 400 | 404 | 502 | 503);
+		throw error;
+	}
 });
 
 emailRoutes.get("/:id/attachments/:attachmentId", async (c) => {

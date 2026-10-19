@@ -1,7 +1,8 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import PostalMime from "postal-mime";
 import * as schema from "../db/schema";
+import { MAIL_DOMAIN, isMailDomainAddress, localPartOf, stripSubaddress } from "../mailDomain";
 
 type ParsedAddress = {
 	name?: string | null;
@@ -104,43 +105,75 @@ function errorSummary(error: unknown): { name: string; message: string; stack?: 
 	};
 }
 
+// 把所有可能表示收件人的头按优先级收集起来，交给调用方按域名过滤；
+// 不能在第一个非空头就返回，否则转发邮件带进来的原邮箱会把真正的收件地址挡掉。
 function getAccountCandidates(message: ForwardableEmailMessage, parsed: ParsedEmail): string[] {
-	let emails = extractEmailAddresses(headerValue(message.headers, "duck-original-to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "x-original-to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "original-recipient"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "x-github-recipient-address"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "destinations"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "resent-to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(formatAddressList(parsed.to));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(message.to);
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(parsed.deliveredTo || null);
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "delivered-to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "x-forwarded-to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "x-envelope-to"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "cc"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(headerValue(message.headers, "bcc"));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(formatAddressList(parsed.cc));
-	if (emails.length > 0) return emails;
-	emails = extractEmailAddresses(formatAddressList(parsed.bcc));
-	if (emails.length > 0) return emails;
+	const sources = [
+		headerValue(message.headers, "duck-original-to"),
+		headerValue(message.headers, "x-original-to"),
+		headerValue(message.headers, "original-recipient"),
+		headerValue(message.headers, "x-github-recipient-address"),
+		headerValue(message.headers, "destinations"),
+		headerValue(message.headers, "resent-to"),
+		headerValue(message.headers, "to"),
+		formatAddressList(parsed.to),
+		message.to,
+		parsed.deliveredTo || null,
+		headerValue(message.headers, "delivered-to"),
+		headerValue(message.headers, "x-forwarded-to"),
+		headerValue(message.headers, "x-envelope-to"),
+		headerValue(message.headers, "cc"),
+		headerValue(message.headers, "bcc"),
+		formatAddressList(parsed.cc),
+		formatAddressList(parsed.bcc),
+	];
+	const emails: string[] = [];
+	for (const source of sources) emails.push(...extractEmailAddresses(source));
+	return uniqueStrings(emails);
+}
 
-	return [];
+// 账号地址优先（完整地址，其次去掉 +detail），再按收信前缀分流到指定邮箱。
+async function resolveAccount(db: ReturnType<typeof drizzle>, candidates: string[]) {
+	const addressVariants: string[] = [];
+	for (const candidate of candidates) {
+		addressVariants.push(candidate);
+		const stripped = stripSubaddress(candidate);
+		if (stripped !== candidate) addressVariants.push(stripped);
+	}
+
+	const matchedAccounts = await db
+		.select({ id: schema.accounts.id, email: schema.accounts.email })
+		.from(schema.accounts)
+		.where(inArray(schema.accounts.email, uniqueStrings(addressVariants)))
+		.all();
+	for (const variant of addressVariants) {
+		const hit = matchedAccounts.find((item) => item.email === variant);
+		if (hit) return hit;
+	}
+
+	const prefixes = uniqueStrings(
+		candidates
+			.map((candidate) => localPartOf(stripSubaddress(candidate)))
+			.filter((prefix): prefix is string => Boolean(prefix)),
+	);
+	if (prefixes.length === 0) return null;
+
+	const routes = await db
+		.select({ prefix: schema.mailRoutes.prefix, account_id: schema.mailRoutes.account_id })
+		.from(schema.mailRoutes)
+		.where(inArray(schema.mailRoutes.prefix, prefixes))
+		.all();
+	for (const prefix of prefixes) {
+		const route = routes.find((item) => item.prefix === prefix);
+		if (!route) continue;
+		const account = await db
+			.select({ id: schema.accounts.id, email: schema.accounts.email })
+			.from(schema.accounts)
+			.where(eq(schema.accounts.id, route.account_id))
+			.get();
+		if (account) return account;
+	}
+	return null;
 }
 
 export async function emailHandler(
@@ -163,57 +196,21 @@ export async function emailHandler(
 
 		const parsed = await PostalMime.parse(content) as ParsedEmail;
 		const db = drizzle(env.DB, { schema });
-		const candidateEmails = getAccountCandidates(message, parsed);
+		// 只认自己域名下的收件地址；自动转发头里带的原邮箱（Gmail 等）不再作为账号。
+		const candidateEmails = getAccountCandidates(message, parsed).filter(isMailDomainAddress);
 
-		// 无论是自动转发还是直接投递到 Worker 域名邮箱，都必须先识别实际命中的收件地址，
-		// 否则无法判断这封邮件应该归属到哪个 account。
+		// 匿名收集已关闭：收件地址不属于自己邮箱域名的直接拒收，不再按发件人随手写下的地址建号。
 		if (candidateEmails.length === 0) {
-			message.setReject("Failed to determine forwarded account for this email.");
+			message.setReject(`Rejected: recipient must be an @${MAIL_DOMAIN} address.`);
 			return;
 		}
 
-		// 只按候选邮箱查账号，避免每次收件都全表读取 accounts。
-		const matchedAccounts = await db
-			.select({ id: schema.accounts.id, email: schema.accounts.email })
-			.from(schema.accounts)
-			.where(inArray(schema.accounts.email, candidateEmails))
-			.all();
-		let matchedAccount = null;
-		for (const candidateEmail of candidateEmails) {
-			const account = matchedAccounts.find((item) => item.email === candidateEmail);
-			if (!account) continue;
-			matchedAccount = account;
-			break;
-		}
+		// 账号地址优先，其次按收信前缀分流；两者都没命中才拒收。
+		const matchedAccount = await resolveAccount(db, candidateEmails);
 
-		// 第一次见到某个自动转发邮箱时直接建号，新账号放到现有排序末尾；
-		// 并发下若别人已经建好，则回查现有记录继续。
+		// 匿名收集已关闭：未登记的地址不再自动建号，必须在面板里先添加邮箱地址。
 		if (!matchedAccount) {
-			const accountEmail = candidateEmails[0];
-			const accountId = crypto.randomUUID();
-			const nextSortOrder = (await db
-				.select({ value: sql<number>`COALESCE(MAX(${schema.accounts.sort_order}), -1) + 1` })
-				.from(schema.accounts)
-				.get())?.value ?? 0;
-			const created = await db.insert(schema.accounts).values({
-				id: accountId,
-				email: accountEmail,
-				remark: accountEmail,
-				sort_order: nextSortOrder,
-			}).onConflictDoNothing({
-				target: schema.accounts.email,
-			}).run();
-			matchedAccount = (created.meta?.changes || 0) > 0
-				? { id: accountId, email: accountEmail }
-				: await db
-					.select({ id: schema.accounts.id, email: schema.accounts.email })
-					.from(schema.accounts)
-					.where(eq(schema.accounts.email, accountEmail))
-					.get();
-		}
-
-		if (!matchedAccount) {
-			message.setReject("Failed to load forwarded account for this email.");
+			message.setReject("Rejected: recipient is not registered.");
 			return;
 		}
 
@@ -261,6 +258,7 @@ export async function emailHandler(
 			body: parsed.html || parsed.text || null,
 			raw_headers: JSON.stringify(Array.from(message.headers.entries())),
 			read: 0 as const,
+			direction: "in" as const,
 		};
 
 		let insertedEmail = false;

@@ -2,8 +2,11 @@ import { PointerActivationConstraints } from "@dnd-kit/dom";
 import { PointerSensor, DragDropProvider } from "@dnd-kit/react";
 import { isSortableOperation, useSortable } from "@dnd-kit/react/sortable";
 import { useAccountsQuery, useUpdateAccountSortMutation, type Account } from "@/api/account";
+import AddMailboxDialog from "@/components/AddMailboxDialog";
+import ComposeDialog from "@/components/ComposeDialog";
+import SettingsDialog from "@/components/SettingsDialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { Inbox, LayoutDashboard, RefreshCw } from "lucide-react";
+import { Inbox, LayoutDashboard, PenLine, Plus, RefreshCw, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/useAppStore";
 
@@ -66,8 +69,13 @@ function SortableAccountButton({
 export default function Sidebar() {
 	const activeAccount = useAppStore((state) => state.activeAccount);
 	const setActiveAccount = useAppStore((state) => state.setActiveAccount);
-	const accounts = useAccountsQuery().data ?? [];
+	const accountsQuery = useAccountsQuery();
+	const accounts = accountsQuery.data?.items ?? [];
+	const mailDomain = accountsQuery.data?.mailDomain ?? "";
 	const [isRefreshing, setIsRefreshing] = useState(false);
+	const [isAddingMailbox, setIsAddingMailbox] = useState(false);
+	const [isComposing, setIsComposing] = useState(false);
+	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 	const [orderedAccounts, setOrderedAccounts] = useState(accounts);
 	const queryClient = useQueryClient();
 	const updateAccountSortMutation = useUpdateAccountSortMutation();
@@ -78,27 +86,55 @@ export default function Sidebar() {
 
 	return (
 		<aside className="relative z-20 flex h-full w-20 shrink-0 flex-col items-center pt-6 md:pt-10">
-			<div className="relative mb-6 md:mb-8 top-0.5 md:top-1.5">
-				<button
-					type="button"
-					onClick={async () => {
-						if (isRefreshing) return;
-						setIsRefreshing(true);
-						try {
-							await Promise.all([
-								queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-								queryClient.invalidateQueries({ queryKey: ["emails"] }),
-							]);
-						} finally {
-							setIsRefreshing(false);
-						}
-					}}
-					className="peer flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-secondary hover:text-foreground"
-				>
-					<RefreshCw size={18} strokeWidth={2} className={isRefreshing ? "animate-spin text-foreground" : ""} />
-				</button>
-				<div className="pointer-events-none absolute left-full top-1/2 ml-4 hidden -translate-y-1/2 translate-x-[-10px] whitespace-nowrap rounded-sm bg-foreground px-3.5 py-2 text-xs font-medium text-background opacity-0 transition-all duration-300 peer-hover:translate-x-0 peer-hover:opacity-100 peer-focus-visible:translate-x-0 peer-focus-visible:opacity-100 md:block">
-					刷新
+			<div className="mb-6 flex flex-col items-center gap-2 top-0.5 md:mb-8 md:top-1.5">
+				<div className="relative">
+					<button
+						type="button"
+						onClick={async () => {
+							if (isRefreshing) return;
+							setIsRefreshing(true);
+							try {
+								await Promise.all([
+									queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+									queryClient.invalidateQueries({ queryKey: ["emails"] }),
+								]);
+							} finally {
+								setIsRefreshing(false);
+							}
+						}}
+						className="peer flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-secondary hover:text-foreground"
+					>
+						<RefreshCw size={18} strokeWidth={2} className={isRefreshing ? "animate-spin text-foreground" : ""} />
+					</button>
+					<div className="pointer-events-none absolute left-full top-1/2 ml-4 hidden -translate-y-1/2 translate-x-[-10px] whitespace-nowrap rounded-sm bg-foreground px-3.5 py-2 text-xs font-medium text-background opacity-0 transition-all duration-300 peer-hover:translate-x-0 peer-hover:opacity-100 peer-focus-visible:translate-x-0 peer-focus-visible:opacity-100 md:block">
+						刷新
+					</div>
+				</div>
+				<div className="relative">
+					<button
+						type="button"
+						onClick={() => setIsComposing(true)}
+						disabled={accounts.length === 0}
+						className="peer flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+					>
+						<PenLine size={18} strokeWidth={2} />
+					</button>
+					<div className="pointer-events-none absolute left-full top-1/2 ml-4 hidden -translate-y-1/2 translate-x-[-10px] whitespace-nowrap rounded-sm bg-foreground px-3.5 py-2 text-xs font-medium text-background opacity-0 transition-all duration-300 peer-hover:translate-x-0 peer-hover:opacity-100 peer-focus-visible:translate-x-0 peer-focus-visible:opacity-100 md:block">
+						写邮件
+					</div>
+				</div>
+				<div className="relative">
+					<button
+						type="button"
+						onClick={() => setIsAddingMailbox(true)}
+						disabled={!mailDomain}
+						className="peer flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+					>
+						<Plus size={18} strokeWidth={2} />
+					</button>
+					<div className="pointer-events-none absolute left-full top-1/2 ml-4 hidden -translate-y-1/2 translate-x-[-10px] whitespace-nowrap rounded-sm bg-foreground px-3.5 py-2 text-xs font-medium text-background opacity-0 transition-all duration-300 peer-hover:translate-x-0 peer-hover:opacity-100 peer-focus-visible:translate-x-0 peer-focus-visible:opacity-100 md:block">
+						添加邮箱
+					</div>
 				</div>
 			</div>
 			<nav className="flex min-h-0 flex-1 flex-col items-center gap-5 md:gap-6">
@@ -170,6 +206,41 @@ export default function Sidebar() {
 					</DragDropProvider>
 				</div>
 			</nav>
+			<div className="relative mt-auto pt-4">
+				<button
+					type="button"
+					onClick={() => setIsSettingsOpen(true)}
+					className="peer flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-secondary hover:text-foreground"
+				>
+					<Settings2 size={18} strokeWidth={2} />
+				</button>
+				<div className="pointer-events-none absolute left-full top-1/2 ml-4 hidden -translate-y-1/2 translate-x-[-10px] whitespace-nowrap rounded-sm bg-foreground px-3.5 py-2 text-xs font-medium text-background opacity-0 transition-all duration-300 peer-hover:translate-x-0 peer-hover:opacity-100 peer-focus-visible:translate-x-0 peer-focus-visible:opacity-100 md:block">
+					设置
+				</div>
+			</div>
+			{isAddingMailbox && mailDomain && (
+				<AddMailboxDialog
+					mailDomain={mailDomain}
+					onClose={() => setIsAddingMailbox(false)}
+					onCreated={(accountId) => {
+						setIsAddingMailbox(false);
+						setActiveAccount(accountId);
+					}}
+				/>
+			)}
+			{isComposing && (
+				<ComposeDialog
+					accounts={accounts}
+					defaultAccountId={accounts.some((account) => account.id === activeAccount) ? activeAccount : null}
+					onClose={() => setIsComposing(false)}
+					onSent={(accountId) => {
+						setIsComposing(false);
+						setActiveAccount(accountId);
+						void queryClient.invalidateQueries({ queryKey: ["emails"] });
+					}}
+				/>
+			)}
+			{isSettingsOpen && <SettingsDialog onClose={() => setIsSettingsOpen(false)} />}
 		</aside>
 	);
 }

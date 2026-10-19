@@ -19,6 +19,8 @@ export type EmailListItem = {
 	from_name: string | null;
 	sent_at: number;
 	read: number;
+	recipient: string | null;
+	direction: "in" | "out";
 };
 
 export type EmailRecord = {
@@ -36,6 +38,7 @@ export type EmailRecord = {
 	snippet: string | null;
 	body: string | null;
 	raw_headers: string | null;
+	direction: "in" | "out";
 	account: Account;
 };
 
@@ -136,6 +139,26 @@ export function useDeleteEmailMutation() {
 			);
 			queryClient.invalidateQueries({ queryKey: ["emails"] as const });
 			queryClient.invalidateQueries({ queryKey: ["stats"] });
+		},
+	});
+}
+
+export type SendEmailInput = {
+	account_id: string;
+	to: string;
+	subject: string;
+	text: string;
+	html?: string;
+	reply_to?: string;
+};
+
+export function useSendEmailMutation() {
+	return useMutation({
+		mutationFn: async (input: SendEmailInput) =>
+			(await apiRequest<{ item: { id: string } }>("/api/emails/send", { method: "POST", body: input })).item,
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({ queryKey: ["emails"] });
+			await queryClient.invalidateQueries({ queryKey: ["stats"] });
 		},
 	});
 }

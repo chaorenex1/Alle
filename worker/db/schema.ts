@@ -21,6 +21,28 @@ export const emails = sqliteTable("emails", {
 	body: text("body"),
 	raw_headers: text("raw_headers"),
 	read: integer("read").notNull().default(0),
+	// in = 收到，out = 从这个邮箱发出；已发送邮件同样落在所属账号下。
+	direction: text("direction").notNull().default("in"),
+});
+
+// 收信前缀分流：任意前缀的来信可以落到指定邮箱，代替为每个前缀单独建账号。
+export const mailRoutes = sqliteTable("mail_routes", {
+	id: text("id").primaryKey(),
+	prefix: text("prefix").notNull().unique(),
+	account_id: text("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+	created_at: integer("created_at").notNull(),
+});
+
+// 外部调用令牌：只存哈希，scopes 形如 "send,read"，account_id 为空表示不限邮箱。
+export const mailTokens = sqliteTable("mail_tokens", {
+	id: text("id").primaryKey(),
+	name: text("name").notNull(),
+	token_hash: text("token_hash").notNull().unique(),
+	token_prefix: text("token_prefix").notNull(),
+	scopes: text("scopes").notNull(),
+	account_id: text("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+	created_at: integer("created_at").notNull(),
+	last_used_at: integer("last_used_at"),
 });
 
 export const attachments = sqliteTable("attachments", {

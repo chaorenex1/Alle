@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { Account } from "@/api/account";
+import type { AccountsPayload } from "@/api/account";
 import { apiRequest, queryClient } from "@/api/client";
 import { prefetchEmailsInfiniteQuery } from "@/api/email";
 import { hideBootLoading } from "@/lib/bootLoading";
@@ -23,9 +23,9 @@ export default function App() {
 					queryKey: ["stats", todayStart],
 					queryFn: () => apiRequest<Stats>(`/api/stats?today_start=${todayStart}`),
 				});
-				const accounts = await queryClient.fetchQuery({
+				const { items: accounts } = await queryClient.fetchQuery({
 					queryKey: ["accounts", "list"] as const,
-					queryFn: async ({ signal }) => (await apiRequest<{ items: Account[] }>("/api/accounts", { signal })).items,
+					queryFn: async ({ signal }) => await apiRequest<AccountsPayload>("/api/accounts", { signal }),
 				});
 				if (cancelled) return;
 				const nextActiveAccount = currentActiveAccount !== "dashboard" && currentActiveAccount !== "all" && !accounts.some((account) => account.id === currentActiveAccount)

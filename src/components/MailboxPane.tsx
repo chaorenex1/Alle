@@ -11,7 +11,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 export default function MailboxPane() {
 	const activeAccount = useAppStore((state) => state.activeAccount);
 	const accountsQuery = useAccountsQuery();
-	const account = activeAccount === "all" ? null : accountsQuery.data?.find((item) => item.id === activeAccount) || null;
+	const account = activeAccount === "all" ? null : accountsQuery.data?.items.find((item) => item.id === activeAccount) || null;
 	const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [editingRemark, setEditingRemark] = useState(false);
@@ -177,7 +177,7 @@ export default function MailboxPane() {
 										>
 											<div className="mb-1.5 flex items-center justify-between gap-3">
 												<span className={`truncate text-sm tracking-wide ${listEmail.read === 0 ? "font-bold text-foreground" : "font-medium text-secondary-foreground"}`}>
-													{listEmail.from_name || "未知发件人"}
+													{listEmail.direction === "out" ? `发给 ${listEmail.recipient || "未知收件人"}` : listEmail.from_name || "未知发件人"}
 												</span>
 												<div className="flex shrink-0 items-center gap-1.5">
 													{listEmail.read === 0 && <Circle size={8} className="fill-current text-chart-1" />}
