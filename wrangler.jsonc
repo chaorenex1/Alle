@@ -21,7 +21,7 @@
 		{
 			"binding": "DB",
 			"database_name": "alle",
-			"database_id": "fa808d75-9274-43be-8b55-c8f29805b251",
+			"database_id": "aa7eff17-1771-410a-8969-bc0de6910185",
 			"remote": false
 		}
 	],
@@ -31,7 +31,21 @@
 			"bucket_name": "alle",
 			"remote": false
 		}
-	]
+	],
+	// Cloudflare Email Sending：从已登记邮箱发信，需要在面板为域名开通 Email Sending。
+	// 自定义域名：workers.dev 在部分网络下不可达，绑定到自己的域名更稳。
+	"routes": [
+		{
+			"pattern": "alle.chaorenex1.com",
+			"custom_domain": true
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL",
+			"remote": true
+		}
+	],
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
